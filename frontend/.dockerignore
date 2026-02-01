@@ -28,4 +28,3 @@ npm-debug.log*
 .gitignore
 Dockerfile
 .dockerignore
-nginx.conf
