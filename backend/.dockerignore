@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+ENV/
+env/
+.env
+.env.*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Database (local)
+*.db
+*.db-shm
+*.db-wal
+
+# Misc
+.DS_Store
+*.log
+.git/
+.gitignore
+Dockerfile
+.dockerignore

@@ -1,0 +1,82 @@
+# Docker Compose for local development
+# Usage: docker-compose up
+
+services:
+  # ==================== BACKEND ====================
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/leveling_guide
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - FRONTEND_URL=http://localhost:5173
+      - ENV=development
+    volumes:
+      # Mount source code for hot reload
+      - ./backend:/app
+    depends_on:
+      db:
+        condition: service_healthy
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    networks:
+      - app-network
+
+  # ==================== FRONTEND ====================
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: http://localhost:8000/api
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    networks:
+      - app-network
+
+  # ==================== FRONTEND DEV (with hot reload) ====================
+  frontend-dev:
+    image: node:20-alpine
+    working_dir: /app
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_URL=http://localhost:8000/api
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    networks:
+      - app-network
+    profiles:
+      - dev
+
+  # ==================== DATABASE ====================
+  db:
+    image: postgres:16-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=leveling_guide
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  postgres_data:

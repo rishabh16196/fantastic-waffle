@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Testing
+coverage/
+.nyc_output/
+
+# Misc
+.DS_Store
+*.log
+npm-debug.log*
+.git/
+.gitignore
+Dockerfile
+.dockerignore
+nginx.conf
