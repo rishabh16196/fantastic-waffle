@@ -1,0 +1,44 @@
+# Production Docker Compose
+# Deployed via GitHub Actions
+# Uses images from GitHub Container Registry (ghcr.io)
+
+services:
+  # ==================== BACKEND ====================
+  backend:
+    image: ghcr.io/${GITHUB_USERNAME}/leveling-guide-backend:${TAG:-latest}
+    expose:
+      - "8000"
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost}
+      - ENV=production
+    restart: always
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - app-network
+
+  # ==================== FRONTEND ====================
+  frontend:
+    image: ghcr.io/${GITHUB_USERNAME}/leveling-guide-frontend:${TAG:-latest}
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    restart: always
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge
