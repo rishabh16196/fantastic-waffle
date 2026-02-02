@@ -9,6 +9,7 @@ Endpoints:
 
 import os
 from typing import List
+from collections import defaultdict
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session as DBSession
@@ -553,21 +554,28 @@ def get_role(
     level_names = {l.id: l.name for l in levels}
     competency_names = {c.id: c.name for c in competencies}
     
-    # Get definitions with their examples
+    # Get definitions
     definitions = db.query(Definition).filter(
         Definition.role_id == role_id,
         Definition.is_active == True
     ).all()
     
+    # Get ALL examples for this role in ONE query (fixes N+1 problem)
+    all_examples = db.query(Example).filter(
+        Example.role_id == role_id,
+        Example.is_active == True
+    ).all()
+    
+    # Group examples by (level_id, competency_id) for fast lookup
+    examples_map = defaultdict(list)
+    for ex in all_examples:
+        key = (ex.level_id, ex.competency_id)
+        examples_map[key].append(ex)
+    
     definitions_response = []
     for defn in definitions:
-        # Get examples for this definition's level/competency combination
-        examples = db.query(Example).filter(
-            Example.role_id == role_id,
-            Example.level_id == defn.level_id,
-            Example.competency_id == defn.competency_id,
-            Example.is_active == True
-        ).all()
+        # Look up examples from the pre-fetched map (O(1) instead of DB query)
+        examples = examples_map.get((defn.level_id, defn.competency_id), [])
         
         definitions_response.append(DefinitionWithExamplesResponse(
             id=defn.id,
