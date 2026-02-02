@@ -20,11 +20,13 @@ from schemas import (
     RoleResponse, RoleDetailResponse, RoleListResponse, LevelResponse, CompetencyResponse,
     DefinitionWithExamplesResponse, ExampleResponse, ProcessingStatusResponse,
     ManagerRegisterRequest, EmployeeJoinRequest, LoginRequest, AuthResponse, MeResponse, UserResponse, CompanyResponse,
-    NudgeCreateRequest, NudgeResponse, NudgeUpdateRequest
+    NudgeCreateRequest, NudgeResponse, NudgeUpdateRequest,
+    PromptResponse, PromptUpdateRequest, PromptListResponse
 )
 from file_parser import extract_text
 from openai_service import process_and_save_leveling_guide
 from auth import get_current_user, require_user, require_manager
+from prompt_service import seed_default_prompts, list_prompts, get_prompt, update_prompt
 
 load_dotenv()
 
@@ -53,8 +55,19 @@ _processing_status = {}
 
 @app.on_event("startup")
 def startup():
-    """Initialize database on startup."""
+    """Initialize database and seed default prompts on startup."""
+    from database import SessionLocal
+    
     init_db()
+    
+    # Seed default prompts if they don't exist
+    db = SessionLocal()
+    try:
+        created = seed_default_prompts(db)
+        if created > 0:
+            print(f"Seeded {created} default prompt(s)")
+    finally:
+        db.close()
 
 
 # ==================== AUTH ENDPOINTS ====================
@@ -638,6 +651,105 @@ def list_roles(
         )
         for r in roles
     ]
+
+
+# ==================== PROMPT MANAGEMENT ENDPOINTS ====================
+
+@app.get("/api/prompts", response_model=List[PromptResponse])
+def get_prompts(
+    user: User = Depends(require_manager),
+    db: DBSession = Depends(get_db)
+):
+    """
+    List all prompts. Manager only.
+    Use these to customize the AI behavior for parsing and example generation.
+    """
+    prompts = list_prompts(db)
+    return [
+        PromptResponse(
+            id=p.id,
+            key=p.key,
+            name=p.name,
+            description=p.description,
+            system_message=p.system_message,
+            user_message_template=p.user_message_template,
+            model=p.model,
+            temperature=p.temperature,
+            is_active=p.is_active,
+            created_at=p.created_at,
+            updated_at=p.updated_at
+        )
+        for p in prompts
+    ]
+
+
+@app.get("/api/prompts/{prompt_key}", response_model=PromptResponse)
+def get_prompt_by_key(
+    prompt_key: str,
+    user: User = Depends(require_manager),
+    db: DBSession = Depends(get_db)
+):
+    """Get a single prompt by its key. Manager only."""
+    prompt = get_prompt(db, prompt_key)
+    if not prompt:
+        raise HTTPException(status_code=404, detail="Prompt not found")
+    
+    return PromptResponse(
+        id=prompt.id,
+        key=prompt.key,
+        name=prompt.name,
+        description=prompt.description,
+        system_message=prompt.system_message,
+        user_message_template=prompt.user_message_template,
+        model=prompt.model,
+        temperature=prompt.temperature,
+        is_active=prompt.is_active,
+        created_at=prompt.created_at,
+        updated_at=prompt.updated_at
+    )
+
+
+@app.put("/api/prompts/{prompt_key}", response_model=PromptResponse)
+def update_prompt_by_key(
+    prompt_key: str,
+    request: PromptUpdateRequest,
+    user: User = Depends(require_manager),
+    db: DBSession = Depends(get_db)
+):
+    """
+    Update a prompt. Manager only.
+    
+    Available template variables:
+    - parse_guide: {{raw_text}}
+    - generate_examples: {{company_url}}, {{role_name}}, {{level_name}}, {{competency_name}}, {{requirement}}
+    """
+    prompt = update_prompt(
+        db=db,
+        key=prompt_key,
+        name=request.name,
+        description=request.description,
+        system_message=request.system_message,
+        user_message_template=request.user_message_template,
+        model=request.model,
+        temperature=request.temperature
+    )
+    
+    if not prompt:
+        raise HTTPException(status_code=404, detail="Prompt not found")
+    
+    return PromptResponse(
+        id=prompt.id,
+        key=prompt.key,
+        name=prompt.name,
+        description=prompt.description,
+        system_message=prompt.system_message,
+        user_message_template=prompt.user_message_template,
+        model=prompt.model,
+        temperature=prompt.temperature,
+        is_active=prompt.is_active,
+        created_at=prompt.created_at,
+        updated_at=prompt.updated_at
+    )
 
 
 @app.get("/health")

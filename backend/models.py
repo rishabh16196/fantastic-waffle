@@ -215,3 +215,28 @@ class Nudge(Base):
     # Relationships
     company = relationship("Company", back_populates="nudges")
     employee = relationship("User", back_populates="nudges")
+
+
+class Prompt(Base):
+    """
+    Stores AI prompts with Jinja2 templating support.
+    Allows runtime editing of prompts without code changes.
+    
+    Available template variables:
+    - parse_guide: {{raw_text}}
+    - generate_examples: {{company_url}}, {{role_name}}, {{level_name}}, 
+                         {{competency_name}}, {{requirement}}
+    """
+    __tablename__ = "prompts"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    key = Column(String(100), unique=True, nullable=False)  # e.g., "parse_guide", "generate_examples"
+    name = Column(String(200), nullable=False)
+    description = Column(Text, nullable=True)
+    system_message = Column(Text, nullable=False)  # System role content
+    user_message_template = Column(Text, nullable=False)  # Jinja2 template
+    model = Column(String(50), default="gpt-4o")
+    temperature = Column(String(10), default="0.7")  # Stored as string to avoid float precision issues
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

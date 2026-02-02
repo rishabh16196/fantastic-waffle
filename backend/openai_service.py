@@ -5,16 +5,20 @@ Features:
 1. parse_leveling_guide: Extract structured data from raw text
 2. generate_examples: Create specific examples for each cell
 3. process_and_save_leveling_guide: Complete flow with BATCHED PARALLEL processing
+
+Prompts are loaded from the database for easy customization.
 """
 
 import json
 import os
 from typing import List, Dict, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from jinja2 import Template
 from openai import OpenAI
 from sqlalchemy.orm import Session as DBSession
 from schemas import ParsedLevelingGuide, ParsedCell
 from models import Role, Level, Competency, Definition, Example
+from prompt_service import get_prompt, render_prompt
 
 # Configuration
 BATCH_SIZE = 10  # Number of parallel API calls per batch
@@ -35,7 +39,7 @@ def get_client() -> OpenAI:
     return _client
 
 
-def parse_leveling_guide(raw_text: str) -> ParsedLevelingGuide:
+def parse_leveling_guide(db: DBSession, raw_text: str) -> ParsedLevelingGuide:
     """
     Parse raw text from a leveling guide into structured format.
     
@@ -43,9 +47,22 @@ def parse_leveling_guide(raw_text: str) -> ParsedLevelingGuide:
     - Level names (rows)
     - Competency names (columns)
     - Cell contents (requirements at each level/competency intersection)
+    
+    Prompt is loaded from the database (key: "parse_guide").
     """
     
-    prompt = """You are parsing a leveling guide document. Extract the structure into JSON format.
+    # Get prompt from database
+    prompt_config = get_prompt(db, "parse_guide")
+    
+    if prompt_config:
+        system_message = prompt_config.system_message
+        user_message = render_prompt(prompt_config.user_message_template, {"raw_text": raw_text})
+        model = prompt_config.model
+        temperature = float(prompt_config.temperature)
+    else:
+        # Fallback to hardcoded defaults if prompt not found
+        system_message = "You are a helpful assistant that parses leveling guides into structured JSON. Always respond with valid JSON only, no markdown formatting."
+        user_message = f"""You are parsing a leveling guide document. Extract the structure into JSON format.
 
 A leveling guide is a table where:
 - Rows represent career levels (e.g., L1-Junior, L2-Mid, L3-Senior, etc.)
@@ -53,14 +70,14 @@ A leveling guide is a table where:
 - Each cell describes what's expected at that level for that competency
 
 Extract and return a JSON object with this exact structure:
-{
+{{
     "levels": ["Level 1 Name", "Level 2 Name", ...],
     "competencies": ["Competency 1 Name", "Competency 2 Name", ...],
     "cells": [
-        {"level_name": "Level 1 Name", "competency_name": "Competency 1 Name", "requirement": "Description text..."},
+        {{"level_name": "Level 1 Name", "competency_name": "Competency 1 Name", "requirement": "Description text..."}},
         ...
     ]
-}
+}}
 
 Rules:
 - Preserve the exact level and competency names from the document
@@ -71,15 +88,17 @@ Rules:
 
 Here is the leveling guide text to parse:
 
-"""
+{raw_text}"""
+        model = "gpt-4o"
+        temperature = 0.1
 
     response = get_client().chat.completions.create(
-        model="gpt-4o",
+        model=model,
         messages=[
-            {"role": "system", "content": "You are a helpful assistant that parses leveling guides into structured JSON. Always respond with valid JSON only, no markdown formatting."},
-            {"role": "user", "content": prompt + raw_text}
+            {"role": "system", "content": system_message},
+            {"role": "user", "content": user_message}
         ],
-        temperature=0.1,  # Low temperature for consistent parsing
+        temperature=temperature,
         response_format={"type": "json_object"}
     )
     
@@ -99,7 +118,8 @@ def generate_examples_for_cell(
     role_name: str,
     level_name: str,
     competency_name: str,
-    requirement: str
+    requirement: str,
+    prompt_config: Optional[Dict] = None
 ) -> List[str]:
     """
     Generate 3 specific examples for a single cell in the leveling guide.
@@ -110,12 +130,29 @@ def generate_examples_for_cell(
         level_name: The level (e.g., "L3 - Senior")
         competency_name: The competency (e.g., "Technical Skills")
         requirement: The requirement text from the leveling guide
+        prompt_config: Optional pre-fetched prompt configuration from database
     
     Returns:
         List of 3 example strings
     """
     
-    prompt = f"""You are helping a manager explain career expectations to their direct reports.
+    variables = {
+        "company_url": company_url,
+        "role_name": role_name,
+        "level_name": level_name,
+        "competency_name": competency_name,
+        "requirement": requirement
+    }
+    
+    if prompt_config:
+        system_message = prompt_config["system_message"]
+        user_message = render_prompt(prompt_config["user_message_template"], variables)
+        model = prompt_config["model"]
+        temperature = float(prompt_config["temperature"])
+    else:
+        # Fallback to hardcoded defaults if prompt not provided
+        system_message = "You are a career coach helping employees understand what great performance looks like. Give specific, actionable examples. Respond with valid JSON only."
+        user_message = f"""You are helping a manager explain career expectations to their direct reports.
 
 Context:
 - Company: {company_url}
@@ -137,14 +174,16 @@ Each example should:
 Format your response as a JSON object:
 {{"examples": ["Example 1 text", "Example 2 text", "Example 3 text"]}}
 """
+        model = "gpt-4o"
+        temperature = 0.7
 
     response = get_client().chat.completions.create(
-        model="gpt-4o",
+        model=model,
         messages=[
-            {"role": "system", "content": "You are a career coach helping employees understand what great performance looks like. Give specific, actionable examples. Respond with valid JSON only."},
-            {"role": "user", "content": prompt}
+            {"role": "system", "content": system_message},
+            {"role": "user", "content": user_message}
         ],
-        temperature=0.7,  # Some creativity for varied examples
+        temperature=temperature,
         response_format={"type": "json_object"}
     )
     
@@ -158,7 +197,8 @@ def _generate_examples_task(
     role_name: str,
     level_name: str,
     competency_name: str,
-    requirement: str
+    requirement: str,
+    prompt_config: Optional[Dict] = None
 ) -> Tuple[str, List[str]]:
     """
     Wrapper for parallel execution. Returns (cell_key, examples).
@@ -169,7 +209,8 @@ def _generate_examples_task(
             role_name=role_name,
             level_name=level_name,
             competency_name=competency_name,
-            requirement=requirement
+            requirement=requirement,
+            prompt_config=prompt_config
         )
         return (cell_key, examples)
     except Exception as e:
@@ -202,7 +243,7 @@ def process_and_save_leveling_guide(
     
     # Step 1: Parse the leveling guide
     print(f"[1/4] Parsing leveling guide for {role_name}...")
-    parsed_guide = parse_leveling_guide(raw_text)
+    parsed_guide = parse_leveling_guide(db, raw_text)
     print(f"      Found {len(parsed_guide.levels)} levels, {len(parsed_guide.competencies)} competencies, {len(parsed_guide.cells)} cells")
     
     # Step 2: Create or update the role
@@ -277,6 +318,17 @@ def process_and_save_leveling_guide(
     # Step 5: Generate examples in BATCHED PARALLEL
     print(f"[4/4] Generating examples in parallel (batch size: {BATCH_SIZE})...")
     
+    # Fetch the prompt configuration once (before parallel execution)
+    examples_prompt = get_prompt(db, "generate_examples")
+    prompt_config = None
+    if examples_prompt:
+        prompt_config = {
+            "system_message": examples_prompt.system_message,
+            "user_message_template": examples_prompt.user_message_template,
+            "model": examples_prompt.model,
+            "temperature": examples_prompt.temperature
+        }
+    
     # Prepare all tasks
     tasks = []
     for cell in parsed_guide.cells:
@@ -316,7 +368,8 @@ def process_and_save_leveling_guide(
                     task["role_name"],
                     task["level_name"],
                     task["competency_name"],
-                    task["requirement"]
+                    task["requirement"],
+                    prompt_config
                 ): task
                 for task in batch
             }

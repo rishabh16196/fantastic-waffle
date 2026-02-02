@@ -237,3 +237,38 @@ class ParsedLevelingGuide(BaseModel):
     levels: List[str]  # Ordered list of level names
     competencies: List[str]  # Ordered list of competency names
     cells: List[ParsedCell]  # All cells with their requirements
+
+
+# === Prompt Management Schemas ===
+
+class PromptResponse(BaseModel):
+    """A prompt stored in the database."""
+    id: str
+    key: str
+    name: str
+    description: Optional[str] = None
+    system_message: str
+    user_message_template: str
+    model: str
+    temperature: str
+    is_active: bool = True
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class PromptUpdateRequest(BaseModel):
+    """Request to update a prompt."""
+    name: Optional[str] = None
+    description: Optional[str] = None
+    system_message: Optional[str] = None
+    user_message_template: Optional[str] = None
+    model: Optional[str] = None
+    temperature: Optional[str] = None
+
+
+class PromptListResponse(BaseModel):
+    """List of prompts."""
+    prompts: List[PromptResponse]
