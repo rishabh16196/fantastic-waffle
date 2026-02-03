@@ -103,7 +103,3 @@ With more time, I would:
 3. **Export Options**: PDF/Notion/Google Sheets export
 4. **User Accounts**: Save and manage multiple leveling guides
 5. **Caching**: Cache company context from website scraping
-
-## License
-
-MIT

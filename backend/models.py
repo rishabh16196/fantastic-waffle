@@ -11,11 +11,6 @@ Data Model Design (Normalized):
 - Example: AI-generated examples for a definition
 - Nudge: An employee request for a missing leveling guide
 
-This normalized structure enables:
-- Querying all examples for a specific role/level
-- Querying all examples for a competency across levels
-- Company-scoped data isolation
-- Persistent storage without session tracking
 """
 
 import uuid

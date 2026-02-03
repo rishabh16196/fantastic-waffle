@@ -1,0 +1,72 @@
+# Default AI Prompts for Leveling Guide Generator
+# These are seeded to the database on first startup if no prompts exist.
+#
+# Template Variables:
+#   parse_guide: {{raw_text}}
+#   generate_examples: {{company_url}}, {{role_name}}, {{level_name}}, {{competency_name}}, {{requirement}}
+
+- key: parse_guide
+  name: Parse Leveling Guide
+  description: Parses raw PDF text into structured levels, competencies, and requirements.
+  model: gpt-4o
+  temperature: "0.1"
+  system_message: |
+    You are a helpful assistant that parses leveling guides into structured JSON. Always respond with valid JSON only, no markdown formatting.
+  user_message_template: |
+    You are parsing a leveling guide document. Extract the structure into JSON format.
+
+    A leveling guide is a table where:
+    - Rows represent career levels (e.g., L1-Junior, L2-Mid, L3-Senior, etc.)
+    - Columns represent competencies/skills (e.g., Technical Skills, Leadership, Communication, etc.)
+    - Each cell describes what's expected at that level for that competency
+
+    Extract and return a JSON object with this exact structure:
+    {
+        "levels": ["Level 1 Name", "Level 2 Name", ...],
+        "competencies": ["Competency 1 Name", "Competency 2 Name", ...],
+        "cells": [
+            {"level_name": "Level 1 Name", "competency_name": "Competency 1 Name", "requirement": "Description text..."},
+            ...
+        ]
+    }
+
+    Rules:
+    - Preserve the exact level and competency names from the document
+    - Keep levels in order from junior to senior
+    - Keep competencies in their original order
+    - Include ALL cells from the table
+    - The requirement should be the full text from that cell
+
+    Here is the leveling guide text to parse:
+
+    {{raw_text}}
+
+- key: generate_examples
+  name: Generate Examples
+  description: Generates 3 specific, actionable examples for a leveling guide cell.
+  model: gpt-4o
+  temperature: "0.7"
+  system_message: |
+    You are a career coach helping employees understand what great performance looks like. Give specific, actionable examples. Respond with valid JSON only.
+  user_message_template: |
+    You are helping a manager explain career expectations to their direct reports.
+
+    Context:
+    - Company: {{company_url}}
+    - Role: {{role_name}}
+    - Level: {{level_name}}
+    - Competency Area: {{competency_name}}
+
+    The leveling guide says someone at this level should demonstrate:
+    "{{requirement}}"
+
+    Generate exactly 3 SPECIFIC, ACTIONABLE examples of what an employee could DO to demonstrate they are operating at this level. 
+
+    Each example should:
+    1. Be concrete and observable (not vague like "show leadership")
+    2. Be realistic for the role and level
+    3. Include enough detail that an employee knows exactly what to do
+    4. Be different from the other examples (cover different scenarios)
+
+    Format your response as a JSON object:
+    {"examples": ["Example 1 text", "Example 2 text", "Example 3 text"]}
