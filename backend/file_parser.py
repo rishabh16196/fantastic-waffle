@@ -5,8 +5,9 @@ Supports PDF, CSV, and plain text files.
 
 import csv
 import io
-from typing import Optional
 import pdfplumber
+
+from validations import validate_extracted_text
 
 
 def extract_text_from_pdf(file_content: bytes) -> str:
@@ -67,15 +68,23 @@ def extract_text(file_content: bytes, filename: str) -> str:
     
     Returns:
         The extracted text content
+        
+    Raises:
+        ValidationError: If extracted text is empty or too short
     """
     filename_lower = filename.lower()
     
     if filename_lower.endswith(".pdf"):
-        return extract_text_from_pdf(file_content)
+        text = extract_text_from_pdf(file_content)
     elif filename_lower.endswith(".csv"):
-        return extract_text_from_csv(file_content)
+        text = extract_text_from_csv(file_content)
     elif filename_lower.endswith((".txt", ".md", ".markdown")):
-        return extract_text_from_plain(file_content)
+        text = extract_text_from_plain(file_content)
     else:
         # Default to plain text extraction
-        return extract_text_from_plain(file_content)
+        text = extract_text_from_plain(file_content)
+    
+    # Validate extracted text
+    validate_extracted_text(text)
+    
+    return text

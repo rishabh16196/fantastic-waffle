@@ -36,7 +36,7 @@ export default function UploadForm() {
       'text/markdown': ['.md'],
     },
     maxFiles: 1,
-    maxSize: 5 * 1024 * 1024, // 5MB
+    maxSize: 25 * 1024 * 1024, // 25MB
   });
 
   const doUpload = async () => {

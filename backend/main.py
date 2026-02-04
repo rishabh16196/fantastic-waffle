@@ -28,6 +28,7 @@ from file_parser import extract_text
 from openai_service import process_and_save_leveling_guide
 from auth import get_current_user, require_user, require_manager
 from prompt_service import seed_default_prompts, list_prompts, get_prompt, update_prompt, set_prompt_active
+from validations import sanitize_error
 
 load_dotenv()
 
@@ -410,7 +411,7 @@ def process_role_in_background(
     except Exception as e:
         _processing_status[role_id] = {
             "status": "failed",
-            "message": str(e)
+            "message": sanitize_error(e)
         }
     finally:
         db.close()
