@@ -16,7 +16,7 @@ Data Model Design (Normalized):
 import uuid
 import secrets
 from datetime import datetime
-from sqlalchemy import Column, String, Text, Integer, DateTime, ForeignKey, Boolean
+from sqlalchemy import Column, String, Text, Integer, DateTime, ForeignKey, Boolean, Float
 from sqlalchemy.orm import relationship
 from database import Base
 
@@ -51,6 +51,7 @@ class Company(Base):
     levels = relationship("Level", back_populates="company", cascade="all, delete-orphan")
     competencies = relationship("Competency", back_populates="company", cascade="all, delete-orphan")
     definitions = relationship("Definition", back_populates="company", cascade="all, delete-orphan")
+    quality_metrics = relationship("DefinitionQualityMetrics", back_populates="company", cascade="all, delete-orphan")
     examples = relationship("Example", back_populates="company", cascade="all, delete-orphan")
     nudges = relationship("Nudge", back_populates="company", cascade="all, delete-orphan")
 
@@ -95,6 +96,7 @@ class Role(Base):
     levels = relationship("Level", back_populates="role", cascade="all, delete-orphan")
     competencies = relationship("Competency", back_populates="role", cascade="all, delete-orphan")
     definitions = relationship("Definition", back_populates="role", cascade="all, delete-orphan")
+    quality_metrics = relationship("DefinitionQualityMetrics", back_populates="role", cascade="all, delete-orphan")
     examples = relationship("Example", back_populates="role", cascade="all, delete-orphan")
 
 
@@ -117,6 +119,7 @@ class Level(Base):
     company = relationship("Company", back_populates="levels")
     role = relationship("Role", back_populates="levels")
     definitions = relationship("Definition", back_populates="level", cascade="all, delete-orphan")
+    quality_metrics = relationship("DefinitionQualityMetrics", back_populates="level", cascade="all, delete-orphan")
     examples = relationship("Example", back_populates="level", cascade="all, delete-orphan")
 
 
@@ -139,6 +142,7 @@ class Competency(Base):
     company = relationship("Company", back_populates="competencies")
     role = relationship("Role", back_populates="competencies")
     definitions = relationship("Definition", back_populates="competency", cascade="all, delete-orphan")
+    quality_metrics = relationship("DefinitionQualityMetrics", back_populates="competency", cascade="all, delete-orphan")
     examples = relationship("Example", back_populates="competency", cascade="all, delete-orphan")
 
 
@@ -164,6 +168,47 @@ class Definition(Base):
     role = relationship("Role", back_populates="definitions")
     level = relationship("Level", back_populates="definitions")
     competency = relationship("Competency", back_populates="definitions")
+    quality_metrics = relationship("DefinitionQualityMetrics", back_populates="definition", cascade="all, delete-orphan")
+
+
+class DefinitionQualityMetrics(Base):
+    """
+    Heuristic output quality proxies for a definition (cell).
+    Stored per definition to enable reporting and prompt iteration.
+    """
+    __tablename__ = "definition_quality_metrics"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    company_id = Column(String(36), ForeignKey("companies.id"), nullable=False)
+    role_id = Column(String(36), ForeignKey("roles.id"), nullable=False)
+    level_id = Column(String(36), ForeignKey("levels.id"), nullable=False)
+    competency_id = Column(String(36), ForeignKey("competencies.id"), nullable=False)
+    definition_id = Column(String(36), ForeignKey("definitions.id"), nullable=False)
+    prompt_id = Column(String(36), ForeignKey("prompts.id"), nullable=True)
+    prompt_key = Column(String(100), nullable=False, default="generate_examples")
+    prompt_version = Column(Integer, nullable=False, default=1)
+    prompt_model = Column(String(50), nullable=True)
+    prompt_temperature = Column(String(10), nullable=True)
+
+    examples_count = Column(Integer, nullable=False, default=0)
+    avg_length_chars = Column(Integer, nullable=False, default=0)
+    avg_length_words = Column(Integer, nullable=False, default=0)
+    action_verb_count = Column(Integer, nullable=False, default=0)
+    artifact_term_count = Column(Integer, nullable=False, default=0)
+    generic_phrase_count = Column(Integer, nullable=False, default=0)
+    uniqueness_score = Column(Float, nullable=False, default=0.0)
+
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    company = relationship("Company", back_populates="quality_metrics")
+    role = relationship("Role", back_populates="quality_metrics")
+    level = relationship("Level", back_populates="quality_metrics")
+    competency = relationship("Competency", back_populates="quality_metrics")
+    definition = relationship("Definition", back_populates="quality_metrics")
+    prompt = relationship("Prompt", back_populates="quality_metrics")
 
 
 class Example(Base):
@@ -225,13 +270,17 @@ class Prompt(Base):
     __tablename__ = "prompts"
 
     id = Column(String(36), primary_key=True, default=generate_uuid)
-    key = Column(String(100), unique=True, nullable=False)  # e.g., "parse_guide", "generate_examples"
+    key = Column(String(100), nullable=False)  # e.g., "parse_guide", "generate_examples"
     name = Column(String(200), nullable=False)
     description = Column(Text, nullable=True)
     system_message = Column(Text, nullable=False)  # System role content
     user_message_template = Column(Text, nullable=False)  # Jinja2 template
     model = Column(String(50), default="gpt-4o")
     temperature = Column(String(10), default="0.7")  # Stored as string to avoid float precision issues
+    version = Column(Integer, default=1)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    quality_metrics = relationship("DefinitionQualityMetrics", back_populates="prompt", cascade="all, delete-orphan")

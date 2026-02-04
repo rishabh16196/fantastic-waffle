@@ -8,7 +8,7 @@ Endpoints:
 """
 
 import os
-from typing import List
+from typing import List, Optional
 from collections import defaultdict
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,10 +16,10 @@ from sqlalchemy.orm import Session as DBSession
 from dotenv import load_dotenv
 
 from database import get_db, init_db
-from models import Company, User, Nudge, Role, Level, Competency, Definition, Example
+from models import Company, User, Nudge, Role, Level, Competency, Definition, Example, DefinitionQualityMetrics
 from schemas import (
     RoleResponse, RoleDetailResponse, RoleListResponse, LevelResponse, CompetencyResponse,
-    DefinitionWithExamplesResponse, ExampleResponse, ProcessingStatusResponse,
+    DefinitionWithExamplesResponse, ExampleResponse, DefinitionQualityMetricsResponse, ProcessingStatusResponse,
     ManagerRegisterRequest, EmployeeJoinRequest, LoginRequest, AuthResponse, MeResponse, UserResponse, CompanyResponse,
     NudgeCreateRequest, NudgeResponse, NudgeUpdateRequest,
     PromptResponse, PromptUpdateRequest, PromptListResponse
@@ -27,7 +27,7 @@ from schemas import (
 from file_parser import extract_text
 from openai_service import process_and_save_leveling_guide
 from auth import get_current_user, require_user, require_manager
-from prompt_service import seed_default_prompts, list_prompts, get_prompt, update_prompt
+from prompt_service import seed_default_prompts, list_prompts, get_prompt, update_prompt, set_prompt_active
 
 load_dotenv()
 
@@ -637,6 +637,42 @@ def get_role(
     )
 
 
+@app.get("/api/roles/{role_id}/quality-metrics", response_model=List[DefinitionQualityMetricsResponse])
+def get_role_quality_metrics(
+    role_id: str,
+    prompt_id: Optional[str] = None,
+    prompt_version: Optional[int] = None,
+    user: User = Depends(require_user),
+    db: DBSession = Depends(get_db)
+):
+    """Get per-cell quality proxy metrics for a role."""
+    role = db.query(Role).filter(
+        Role.id == role_id,
+        Role.is_active == True
+    ).first()
+
+    if not role:
+        raise HTTPException(status_code=404, detail="Role not found")
+
+    if role.company_id != user.company_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    metrics_query = db.query(DefinitionQualityMetrics).filter(
+        DefinitionQualityMetrics.role_id == role_id,
+        DefinitionQualityMetrics.company_id == user.company_id,
+        DefinitionQualityMetrics.is_active == True
+    )
+
+    if prompt_id:
+        metrics_query = metrics_query.filter(DefinitionQualityMetrics.prompt_id == prompt_id)
+    if prompt_version is not None:
+        metrics_query = metrics_query.filter(DefinitionQualityMetrics.prompt_version == prompt_version)
+
+    metrics = metrics_query.all()
+
+    return metrics
+
+
 @app.get("/api/roles", response_model=List[RoleResponse])
 def list_roles(
     user: User = Depends(require_user),
@@ -683,6 +719,7 @@ def get_prompts(
             user_message_template=p.user_message_template,
             model=p.model,
             temperature=p.temperature,
+            version=p.version,
             is_active=p.is_active,
             created_at=p.created_at,
             updated_at=p.updated_at
@@ -711,6 +748,7 @@ def get_prompt_by_key(
         user_message_template=prompt.user_message_template,
         model=prompt.model,
         temperature=prompt.temperature,
+        version=prompt.version,
         is_active=prompt.is_active,
         created_at=prompt.created_at,
         updated_at=prompt.updated_at
@@ -739,7 +777,8 @@ def update_prompt_by_key(
         system_message=request.system_message,
         user_message_template=request.user_message_template,
         model=request.model,
-        temperature=request.temperature
+        temperature=request.temperature,
+        is_active=request.is_active
     )
     
     if not prompt:
@@ -754,6 +793,34 @@ def update_prompt_by_key(
         user_message_template=prompt.user_message_template,
         model=prompt.model,
         temperature=prompt.temperature,
+        version=prompt.version,
+        is_active=prompt.is_active,
+        created_at=prompt.created_at,
+        updated_at=prompt.updated_at
+    )
+
+
+@app.post("/api/prompts/{prompt_id}/activate", response_model=PromptResponse)
+def activate_prompt_version(
+    prompt_id: str,
+    user: User = Depends(require_manager),
+    db: DBSession = Depends(get_db)
+):
+    """Set a specific prompt version as active for its key."""
+    prompt = set_prompt_active(db, prompt_id)
+    if not prompt:
+        raise HTTPException(status_code=404, detail="Prompt not found")
+
+    return PromptResponse(
+        id=prompt.id,
+        key=prompt.key,
+        name=prompt.name,
+        description=prompt.description,
+        system_message=prompt.system_message,
+        user_message_template=prompt.user_message_template,
+        model=prompt.model,
+        temperature=prompt.temperature,
+        version=prompt.version,
         is_active=prompt.is_active,
         created_at=prompt.created_at,
         updated_at=prompt.updated_at

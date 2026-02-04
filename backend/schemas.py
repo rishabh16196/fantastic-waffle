@@ -177,6 +177,33 @@ class ExampleResponse(BaseModel):
         from_attributes = True
 
 
+class DefinitionQualityMetricsResponse(BaseModel):
+    id: str
+    company_id: str
+    role_id: str
+    level_id: str
+    competency_id: str
+    definition_id: str
+    prompt_id: Optional[str] = None
+    prompt_key: str
+    prompt_version: int
+    prompt_model: Optional[str] = None
+    prompt_temperature: Optional[str] = None
+    examples_count: int
+    avg_length_chars: int
+    avg_length_words: int
+    action_verb_count: int
+    artifact_term_count: int
+    generic_phrase_count: int
+    uniqueness_score: float
+    is_active: bool = True
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 # === Role Detail Response (for viewing a complete leveling guide) ===
 
 class DefinitionWithExamplesResponse(BaseModel):
@@ -251,6 +278,7 @@ class PromptResponse(BaseModel):
     user_message_template: str
     model: str
     temperature: str
+    version: int
     is_active: bool = True
     created_at: datetime
     updated_at: datetime
@@ -267,6 +295,7 @@ class PromptUpdateRequest(BaseModel):
     user_message_template: Optional[str] = None
     model: Optional[str] = None
     temperature: Optional[str] = None
+    is_active: Optional[bool] = None
 
 
 class PromptListResponse(BaseModel):

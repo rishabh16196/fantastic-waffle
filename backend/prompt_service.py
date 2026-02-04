@@ -30,7 +30,27 @@ def get_prompt(db: Session, key: str) -> Optional[Prompt]:
     return db.query(Prompt).filter(
         Prompt.key == key,
         Prompt.is_active == True
-    ).first()
+    ).order_by(Prompt.version.desc()).first()
+
+
+def set_prompt_active(db: Session, prompt_id: str) -> Optional[Prompt]:
+    """
+    Set a specific prompt version as active and deactivate others with the same key.
+    """
+    prompt = db.query(Prompt).filter(Prompt.id == prompt_id).first()
+    if not prompt:
+        return None
+
+    db.query(Prompt).filter(
+        Prompt.key == prompt.key,
+        Prompt.is_active == True,
+        Prompt.id != prompt_id
+    ).update({"is_active": False})
+
+    prompt.is_active = True
+    db.commit()
+    db.refresh(prompt)
+    return prompt
 
 
 def render_prompt(template_str: str, variables: Dict[str, Any]) -> str:
@@ -105,7 +125,9 @@ def seed_default_prompts(db: Session) -> int:
                 system_message=prompt_data["system_message"],
                 user_message_template=prompt_data["user_message_template"],
                 model=prompt_data["model"],
-                temperature=prompt_data["temperature"]
+                temperature=prompt_data["temperature"],
+                version=1,
+                is_active=True
             )
             db.add(prompt)
             created_count += 1
@@ -126,7 +148,7 @@ def list_prompts(db: Session) -> list:
     Returns:
         List of Prompt objects
     """
-    return db.query(Prompt).filter(Prompt.is_active == True).all()
+    return db.query(Prompt).order_by(Prompt.key.asc(), Prompt.version.desc()).all()
 
 
 def update_prompt(
@@ -137,7 +159,8 @@ def update_prompt(
     system_message: Optional[str] = None,
     user_message_template: Optional[str] = None,
     model: Optional[str] = None,
-    temperature: Optional[str] = None
+    temperature: Optional[str] = None,
+    is_active: Optional[bool] = None
 ) -> Optional[Prompt]:
     """
     Update an existing prompt.
@@ -150,23 +173,33 @@ def update_prompt(
     Returns:
         Updated Prompt object or None if not found
     """
-    prompt = get_prompt(db, key)
-    if not prompt:
+    current_prompt = get_prompt(db, key)
+    if not current_prompt:
         return None
-    
-    if name is not None:
-        prompt.name = name
-    if description is not None:
-        prompt.description = description
-    if system_message is not None:
-        prompt.system_message = system_message
-    if user_message_template is not None:
-        prompt.user_message_template = user_message_template
-    if model is not None:
-        prompt.model = model
-    if temperature is not None:
-        prompt.temperature = temperature
-    
+
+    latest_version = db.query(Prompt).filter(Prompt.key == key).order_by(Prompt.version.desc()).first()
+    next_version = (latest_version.version if latest_version else 0) + 1
+
+    new_prompt = Prompt(
+        key=key,
+        name=name if name is not None else current_prompt.name,
+        description=description if description is not None else current_prompt.description,
+        system_message=system_message if system_message is not None else current_prompt.system_message,
+        user_message_template=user_message_template if user_message_template is not None else current_prompt.user_message_template,
+        model=model if model is not None else current_prompt.model,
+        temperature=temperature if temperature is not None else current_prompt.temperature,
+        version=next_version,
+        is_active=True if is_active is None else is_active
+    )
+    db.add(new_prompt)
+
+    if new_prompt.is_active:
+        db.query(Prompt).filter(
+            Prompt.key == key,
+            Prompt.is_active == True
+        ).update({"is_active": False})
+
+    new_prompt.is_active = True if new_prompt.is_active else False
     db.commit()
-    db.refresh(prompt)
-    return prompt
+    db.refresh(new_prompt)
+    return new_prompt

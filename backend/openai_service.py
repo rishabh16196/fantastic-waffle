@@ -11,18 +11,41 @@ Prompts are loaded from the database for easy customization.
 
 import json
 import os
+import re
 from typing import List, Dict, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from itertools import combinations
 from jinja2 import Template
 from openai import OpenAI
 from sqlalchemy.orm import Session as DBSession
 from schemas import ParsedLevelingGuide, ParsedCell
-from models import Role, Level, Competency, Definition, Example
+from models import Role, Level, Competency, Definition, Example, DefinitionQualityMetrics
 from prompt_service import get_prompt, render_prompt
 
 # Configuration
-BATCH_SIZE = 10  # Number of parallel API calls per batch
-MAX_WORKERS = 10  # Max threads for parallel processing
+BATCH_SIZE = 20  # Number of parallel API calls per batch
+MAX_WORKERS = 20  # Max threads for parallel processing
+
+ACTION_VERBS = {
+    "build", "create", "design", "implement", "lead", "review", "mentor", "write",
+    "present", "analyze", "improve", "optimize", "deliver", "launch", "own",
+    "coordinate", "document", "automate", "debug", "refactor", "test"
+}
+
+ARTIFACT_TERMS = {
+    "pr", "pull request", "design doc", "doc", "documentation", "dashboard",
+    "postmortem", "incident review", "runbook", "spec", "proposal", "report",
+    "roadmap", "meeting", "presentation", "analysis"
+}
+
+GENERIC_PHRASES = {
+    "shows leadership",
+    "drives impact",
+    "demonstrates ownership",
+    "takes initiative",
+    "collaborates effectively",
+    "communicates clearly"
+}
 
 # Lazy client initialization to avoid errors on import
 _client: Optional[OpenAI] = None
@@ -191,6 +214,79 @@ Format your response as a JSON object:
     return result.get("examples", [])[:3]  # Ensure max 3 examples
 
 
+def _tokenize_words(text: str) -> List[str]:
+    return re.findall(r"\b\w+\b", text.lower())
+
+
+def _count_phrase_occurrences(text: str, phrases: set[str]) -> int:
+    lowered = text.lower()
+    return sum(lowered.count(phrase) for phrase in phrases)
+
+
+def _compute_uniqueness_score(examples: List[str]) -> float:
+    if len(examples) <= 1:
+        return 1.0
+
+    gram_sets = []
+    for example in examples:
+        words = _tokenize_words(example)
+        if len(words) >= 3:
+            grams = {" ".join(words[i:i + 3]) for i in range(len(words) - 2)}
+        else:
+            grams = set(words)
+        gram_sets.append(grams)
+
+    similarities = []
+    for a, b in combinations(gram_sets, 2):
+        if not a and not b:
+            similarities.append(1.0)
+            continue
+        union = a | b
+        similarity = (len(a & b) / len(union)) if union else 0.0
+        similarities.append(similarity)
+
+    avg_similarity = sum(similarities) / len(similarities)
+    return max(0.0, min(1.0, 1.0 - avg_similarity))
+
+
+def compute_quality_metrics(examples: List[str]) -> Dict[str, float]:
+    if not examples:
+        return {
+            "examples_count": 0,
+            "avg_length_chars": 0,
+            "avg_length_words": 0,
+            "action_verb_count": 0,
+            "artifact_term_count": 0,
+            "generic_phrase_count": 0,
+            "uniqueness_score": 0.0
+        }
+
+    total_chars = 0
+    total_words = 0
+    action_verb_count = 0
+    artifact_term_count = 0
+    generic_phrase_count = 0
+
+    for example in examples:
+        tokens = _tokenize_words(example)
+        total_chars += len(example)
+        total_words += len(tokens)
+        action_verb_count += sum(1 for t in tokens if t in ACTION_VERBS)
+        artifact_term_count += _count_phrase_occurrences(example, ARTIFACT_TERMS)
+        generic_phrase_count += _count_phrase_occurrences(example, GENERIC_PHRASES)
+
+    count = len(examples)
+    return {
+        "examples_count": count,
+        "avg_length_chars": int(round(total_chars / count)),
+        "avg_length_words": int(round(total_words / count)),
+        "action_verb_count": action_verb_count,
+        "artifact_term_count": artifact_term_count,
+        "generic_phrase_count": generic_phrase_count,
+        "uniqueness_score": _compute_uniqueness_score(examples)
+    }
+
+
 def _generate_examples_task(
     cell_key: str,
     company_url: str,
@@ -321,12 +417,26 @@ def process_and_save_leveling_guide(
     # Fetch the prompt configuration once (before parallel execution)
     examples_prompt = get_prompt(db, "generate_examples")
     prompt_config = None
+    prompt_metadata = {
+        "prompt_id": None,
+        "prompt_key": "generate_examples",
+        "prompt_version": 0,
+        "prompt_model": None,
+        "prompt_temperature": None
+    }
     if examples_prompt:
         prompt_config = {
             "system_message": examples_prompt.system_message,
             "user_message_template": examples_prompt.user_message_template,
             "model": examples_prompt.model,
             "temperature": examples_prompt.temperature
+        }
+        prompt_metadata = {
+            "prompt_id": examples_prompt.id,
+            "prompt_key": examples_prompt.key,
+            "prompt_version": examples_prompt.version,
+            "prompt_model": examples_prompt.model,
+            "prompt_temperature": examples_prompt.temperature
         }
     
     # Prepare all tasks
@@ -338,6 +448,9 @@ def process_and_save_leveling_guide(
             continue
         
         cell_key = f"{cell.level_name}|{cell.competency_name}"
+        definition = cell_definitions.get(cell_key)
+        if not definition:
+            continue
         tasks.append({
             "cell_key": cell_key,
             "company_url": company_url,
@@ -346,7 +459,8 @@ def process_and_save_leveling_guide(
             "competency_name": cell.competency_name,
             "requirement": cell.requirement,
             "level_id": level.id,
-            "competency_id": competency.id
+            "competency_id": competency.id,
+            "definition_id": definition.id
         })
     
     # Process in batches
@@ -398,6 +512,28 @@ def process_and_save_leveling_guide(
                 content=example_content
             )
             db.add(example)
+
+        metrics = compute_quality_metrics(examples)
+        quality_metrics = DefinitionQualityMetrics(
+            company_id=company_id,
+            role_id=role.id,
+            level_id=task["level_id"],
+            competency_id=task["competency_id"],
+            definition_id=task["definition_id"],
+            prompt_id=prompt_metadata["prompt_id"],
+            prompt_key=prompt_metadata["prompt_key"],
+            prompt_version=prompt_metadata["prompt_version"],
+            prompt_model=prompt_metadata["prompt_model"],
+            prompt_temperature=prompt_metadata["prompt_temperature"],
+            examples_count=metrics["examples_count"],
+            avg_length_chars=metrics["avg_length_chars"],
+            avg_length_words=metrics["avg_length_words"],
+            action_verb_count=metrics["action_verb_count"],
+            artifact_term_count=metrics["artifact_term_count"],
+            generic_phrase_count=metrics["generic_phrase_count"],
+            uniqueness_score=metrics["uniqueness_score"]
+        )
+        db.add(quality_metrics)
     
     db.commit()
     db.refresh(role)
