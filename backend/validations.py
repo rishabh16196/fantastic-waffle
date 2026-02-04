@@ -20,7 +20,7 @@ class ValidationError(Exception):
 
 
 # Minimum text length for a valid leveling guide
-MIN_TEXT_LENGTH = 100
+MIN_TEXT_LENGTH = 25
 
 # Minimum required structure
 MIN_LEVELS = 1
