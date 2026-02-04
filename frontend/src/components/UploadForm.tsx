@@ -143,7 +143,7 @@ export default function UploadForm() {
                 <div className="dropzone-empty">
                   <span className="upload-icon">⬆️</span>
                   <p>Drag & drop your leveling guide here</p>
-                  <span className="dropzone-hint">PDF, CSV, TXT, or MD (max 5MB)</span>
+                  <span className="dropzone-hint">PDF, CSV, TXT, or MD (max 25MB)</span>
                 </div>
               )}
             </div>
